@@ -774,7 +774,7 @@ begin
 				WRITE(s, "m_TALK="       ); WRITE(s, m_TALK);        WRITE(s, ",");
 				WRITE(s, "m_TALKD="      ); WRITE(s, m_TALKD);       WRITE(s, ",");
 				WRITE(s, "m_uv_zpar="    ); WRITE(s, m_uv_zpar);     WRITE(s, " ");
---				WRITE(s, "-- "); WRITE(s, now);
+				WRITE(s, "-- "); WRITE(s, now);
 				WRITELINE(ofile, s);
 
 				WRITE(s, "Lattice:");
