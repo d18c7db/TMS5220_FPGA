@@ -12,7 +12,7 @@ int main(int argc, char *argv[])
 {
 	tms5220_device *m_tms5220;
 	int sampleRate = 8000;
-	int i=0, s=0x60, k=0, bytes=0, len=0, off=0;
+	int i=0, s=0x60, k=0, bytes=0, len=0, off=0, start_snd=0;
 	int16_t buffer[MAX_SAMPLE];
 	FILE *fp;
 	// CES phrase plus all Gauntlet sounds ID 8, 81..220, total audio 2m:41s
@@ -190,8 +190,11 @@ int main(int argc, char *argv[])
 
 	fwrite(&wavhdr,sizeof(wavhdr),1,fp);
 
+	start_snd=0;
+	for(k=0; k<start_snd; k++) off+=lens[k];
+
 	// send data streams
-	for(k=0; k<(sizeof(lens)/sizeof(lens[0])); k++)
+	for(k=start_snd; k<(sizeof(lens)/sizeof(lens[0])); k++)
 	{
 		fprintf(stderr, "\nIndex %3d Size %4d", k, lens[k]); fflush(stderr);
 		i=0;
