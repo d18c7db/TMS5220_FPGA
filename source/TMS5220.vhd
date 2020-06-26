@@ -690,13 +690,12 @@ begin
 						m_OLDE     <= '1';
 						m_OLDP     <= '1';
 						m_new_frame_energy_idx <= 0;
-						m_new_frame_repeat     <= '0';
 						m_new_frame_pitch_idx  <= 0;
 						m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
 					end if;
 				end if;
 
-			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(4) = '0') then
+			elsif (m_TALKD = '1') and (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(4) = '0') then
 				if (m_new_frame_energy_idx = 0) then
 					m_OLDE <= '1';
 				else
@@ -777,7 +776,6 @@ begin
 
 						m_new_frame_voiced   <= '0';
 						m_new_frame_unvoiced <= '0';
-						m_new_frame_repeat   <= '0';
 						m_new_frame_zero     <= '0';
 						m_new_frame_stop     <= '0';
 						m_new_frame_repeat_last<= m_new_frame_repeat;
