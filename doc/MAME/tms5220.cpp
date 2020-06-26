@@ -352,7 +352,7 @@ emulating the tms5220 in MCU code). Look for a 16-pin chip at U6 labeled
 
 /* forces m_TALK active instantly whenever m_SPEN would be activated, causing speech delay to be reduced by up to one frame time */
 /* for some reason, this hack makes victory behave better, though it does not match the patent */
-#define FAST_START_HACK 1
+//#define FAST_START_HACK 1
 
 
 /* *****configuration of chip connection stuff***** */
