@@ -168,13 +168,15 @@ architecture RTL of TMS5220 is
 		m_RDB_cmd,
 		m_RDB_flag,
 		m_RST_cmd,
+		m_SXT_cmd,
 		m_RSn,
 		m_RSn_last,
 		m_SPEN,
 		m_T11,
 		m_TALK,
-		m_TALKD,
 		m_TALK_last,
+		m_TALKD,
+		m_TALKD_last,
 		m_UF,
 		m_WSn,
 		m_WSn_last,
@@ -187,14 +189,15 @@ architecture RTL of TMS5220 is
 		m_io_ready,
 		m_irq_pin,
 		m_irq_pin_clr,
-		m_new_frame_repeat,
-		m_new_frame_stop,
-		m_new_frame_unvoiced,
 		m_new_frame_voiced,
+		m_new_frame_unvoiced,
+		m_new_frame_repeat,
+		m_new_frame_repeat_last,
 		m_new_frame_zero,
+		m_new_frame_stop,
 		m_pitch_zero,
-		m_uv_zpar,
-		tmp_new_frame_repeat
+		m_zpar,
+		m_uv_zpar
 								: std_logic := '0';
 	signal
 		phictr
@@ -238,7 +241,7 @@ begin
 	m_DBI    <= I_DBUS;
 
 	O_DBUS   <= m_DBO;
-	O_RDYn   <= m_io_ready;
+	O_RDYn   <= not (m_io_ready or (not m_DDIS));
 	O_INTn   <= not m_irq_pin;
 	O_SPKR   <= to_signed(this_sample, 14);
 
@@ -323,8 +326,21 @@ begin
 		end if;
 	end process;
 
-	-- chip reset on command or when both RS and WS are active
+	-- chip is reset on RESET command or when both RS and WS are active
 	m_RST <= (m_RST_cmd) or ((not m_WSn) and (not m_RSn));
+
+	-- ready flag "not ready" when FIFO full, else "ready"
+	p_READY : process
+	begin
+		wait until rising_edge(CLK);
+		if (m_ENA = '1') then
+			if (m_FIFO_ptr < 8) then
+				m_io_ready <= '0';
+			else
+				m_io_ready <= '1';
+			end if;
+		end if;
+	end process;
 
 	-- read byte flag
 	p_RDBF : process
@@ -364,7 +380,8 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			if (m_RST = '1') or (now < 24.98 ms) then -- FIXME remove after testing
+--			if (m_RST = '1') then
+			if (now < 49.975 ms) then -- FIXME remove after testing
 				m_RNG <= (others=>'1');
 			-- changes synchronous with T cycle
 			elsif (phictr = "11") and (m_TALKD = '1') then
@@ -378,19 +395,20 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
+			if (m_TALKD = '1') then
+				if    (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(3) = '0') and (m_inhibit = '1') then
+					m_pitch_zero <= '1';
+				elsif (m_cycB = '1') and (m_IC = 0) and (m_PC =  0) and (m_T = 20) and (m_PHI(3) = '0') then
+					m_pitch_zero <= '0';
+				end if;
 
-			if (m_IC = 7) and (m_PC = 12) and (m_cycA = '1') and (m_T = 18) and (m_inhibit = '1') then
-				m_pitch_zero <= '1';
-			elsif (m_IC = 0) and (m_PC =  0) and (m_cycB = '1') then
-				m_pitch_zero <= '0';
-			end if;
-
-			-- counter changes synchronous with T cycle 17
-			if (phictr = "11") and (m_T = 16) and (m_TALKD = '1') then
-				if (m_pitch_count+1 < m_current_pitch) and (m_pitch_zero = '0') then
-					m_pitch_count <= m_pitch_count + 1;
-				else
-					m_pitch_count <= 0;
+				-- counter changes synchronous with T cycle 17
+				if (phictr = "11") and (m_T = 16) then
+					if (m_pitch_count+1 < m_current_pitch) and (m_pitch_zero = '0') then
+						m_pitch_count <= m_pitch_count + 1;
+					else
+						m_pitch_count <= 0;
+					end if;
 				end if;
 			end if;
 		end if;
@@ -422,8 +440,8 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			-- every new PC cycle at T17
-			if (m_T = 17) and (m_PHI(3)='0') then
+			-- every new PC cycle
+			if (m_T = 17) and (m_PHI(3) = '0') then
 				if (m_OLDP = '1')  then
 					if (m_RNG(0) = '1') then
 						m_excitation_data <= -64;
@@ -446,9 +464,12 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			if (m_RST = '1') or (m_UF = '1') or (m_new_frame_stop = '1') then
+			if (m_RST = '1') or (m_UF = '1') then
 				m_SPEN <= '0';
-			elsif (m_buffer_low_last = '1') and (m_buffer_low = '0') then
+			elsif ((m_new_frame_stop = '1') and (m_cycA = '1') and (m_IC = 0) and (m_PC = 12) and (m_T = 18) and (m_PHI(4) = '0')) then
+				m_SPEN <= '0';
+			-- if BL transitions from 1 to 0 while SPEN = 0
+			elsif (m_buffer_low_last = '1') and (m_buffer_low = '0') and (m_SPEN = '0') then
 				m_SPEN <= '1';
 			end if;
 		end if;
@@ -459,26 +480,12 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			-- if RESET command or "frame underflow" or "frame stop" condition then stop speech
-			if (m_RST = '1') or (m_UF = '1') then
+			-- if RESET command then stop speech
+			if (m_RST = '1') then
 				m_TALK  <= '0';
 				m_TALKD <= '0';
-				m_OLDE  <= '1';
-				m_OLDP  <= '1';
-			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) then
+			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(3) = '0')then
 				-- if BL transitions from 1 to 0 while SPEN = 0
-
-				if (m_new_frame_energy_idx = 0) then
-					m_OLDE <= '1';
-				else
-					m_OLDE <= '0';
-				end if;
-
-				if (m_new_frame_pitch_idx = 0) then
-					m_OLDP <= '1';
-				else
-					m_OLDP <= '0';
-				end if;
 
 				if (m_TALK = '0') and (m_SPEN = '1') then
 					m_TALK <= '1';
@@ -496,19 +503,23 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			if (m_RST = '1') or (m_UF = '1') then
+			if (m_RST = '1') then
 				m_current_energy  <= 0;
 				m_current_pitch   <= 0;
-			elsif (m_cycB = '1') and (m_T = 17) and (m_PHI(3)='0') and (m_TALKD = '1') then
+			elsif (m_cycB = '1') and (m_T = 20) and (m_PHI(3) = '0') and (m_TALKD = '1') then
 				-- Parameter Count cycle B
 				case m_PC is
 					when 0 =>
-						if (m_inhibit = '0') or (m_IC = 0) then
+						if (m_zpar = '1') then
+							m_current_energy <= 0;
+						elsif (m_inhibit = '0') or (m_IC = 0) then
 							m_current_energy <= m_current_energy +
 							to_integer(shift_right(to_signed(energytable(m_new_frame_energy_idx) - m_current_energy,12), interp_coeff(m_IC)));
 						end if;
 					when 1 =>
-						if (m_inhibit = '0') or (m_IC = 0) then
+						if (m_zpar = '1') then
+							m_current_pitch <= 0;
+						elsif (m_inhibit = '0') or (m_IC = 0) then
 							m_current_pitch <= m_current_pitch +
 							to_integer(shift_right(to_signed(pitchtable(m_new_frame_pitch_idx) - m_current_pitch,12) , interp_coeff(m_IC)));
 						end if;
@@ -538,7 +549,9 @@ begin
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			if (m_TALKD = '1') and (m_PHI(3)='0') then
+			if (m_RST = '1') then
+				m_previous_energy <= 0;
+			elsif (m_TALKD = '1') and (m_PHI(3) = '0') then
 				-- Parameter Count cycle B
 				case m_T is
 					when  1 =>
@@ -582,37 +595,86 @@ begin
 		end if;
 	end process;
 
-	-- write select handler, FIFO, parameter parser
-	p_WS : process
-		variable	s				: line;
+	-- command processing
+	p_CMD : process
 	begin
 		wait until rising_edge(CLK);
 		if (m_ENA = '1') then
-			m_WSn_last <= m_WSn;
-			m_RDB_cmd   <= '0';
-			m_UF       <= '0'; -- FIFO underflow flag
+			if ((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1')) then
+				m_RDB_cmd  <= '0';
+				m_RST_cmd  <= '0';
+				m_SXT_cmd  <= '0';
+				if (m_DDIS = '0') then
+					-- FIXME implement all commands
+					-- command mode
+					case m_DBI(6 downto 4) is
+						when "000" => -- NOP
+						when "001" => -- Read Byte
+							m_RDB_cmd <= '1';
+						when "010" => -- NOP
+						when "011" => -- Read and Branch
+						when "100" => -- Load Address
+						when "101" => -- Speak
+						when "110" => -- Speak External
+							m_SXT_cmd <= '1';
+						when "111" => -- Reset
+							m_RST_cmd <= '1';
+						when others => null;
+					end case;
+				end if;
+			end if;
+		end if;
+	end process;
 
-			if (m_RST = '1') or (m_UF = '1') then
-				m_DDIS            <= '0';
-				m_OF              <= '0';
-				m_UF              <= '0';
-				m_RST_cmd         <= '0';
-				m_io_ready        <= '1';
+	-- Decode Disable when set, the chip is in Speak External mode
+	p_DDIS : process
+	begin
+		wait until rising_edge(CLK);
+		if (m_ENA = '1') then
+			m_TALKD_last <= m_TALKD;
+			if (m_RST = '1') or (m_TALKD_last= '1' and m_TALKD= '0') then
+				m_DDIS <= '0'; -- clear on RESET or falling edge of TALKD
+			elsif (m_SXT_cmd  = '1') then
+				m_DDIS <= '1'; -- set when Speak External command
+			end if;
+		end if;
+	end process;
+
+	-- write select handler, FIFO, parameter parser
+	p_WS : process
+	begin
+		wait until rising_edge(CLK);
+		if (m_ENA = '1') then
+			m_WSn_last   <= m_WSn;
+			m_UF         <= '0'; -- FIFO underflow flag
+			m_OF         <= '0'; -- FIFO overflow flag
+			if (m_RST = '1') then
+				m_OLDE            <= '1';
+				m_OLDP            <= '1';
 				m_inhibit         <= '1';
+				m_zpar            <= '0';
 				m_uv_zpar         <= '0';
 				m_FIFO_ptr        <= FIFO_bits;
+				m_FIFO            <= (others => '0');
+				m_new_frame_stop  <= '0';
 				m_new_frame_energy_idx <= 0;
 				m_new_frame_pitch_idx  <= 0;
+				m_new_frame_k_idx   <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
+				tmp_new_frame_k_idx <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
 			elsif ((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1')) then
+				-- if speak external mode
 				if (m_DDIS = '1') then
-					-- speak external mode
 					if (m_FIFO_ptr > 7) then -- if there is room in FIFO, else values written are LOST
 						if (m_SPEN = '0') and (m_FIFO_ptr > 64) and (m_FIFO_ptr < 73) then
 							-- if this write makes BL transition from 1 to 0 while SPEN = 0
+							m_zpar    <= '1';
 							m_uv_zpar <= '1';
+							m_OLDE    <= '1';
+							m_OLDP    <= '1';
 							m_new_frame_energy_idx <= 0;
 							m_new_frame_pitch_idx  <= 0;
 							m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
+							tmp_new_frame_k_idx    <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
 						end if;
 						m_FIFO(m_FIFO_ptr - 1 downto m_FIFO_ptr - 8) <= m_DBI(0)&m_DBI(1)&m_DBI(2)&m_DBI(3)&m_DBI(4)&m_DBI(5)&m_DBI(6)&m_DBI(7);
 						m_FIFO_ptr <= m_FIFO_ptr - 8; -- update counter of empty bits in FIFO
@@ -620,27 +682,35 @@ begin
 						m_OF <= '1';
 					end if;
 				else
-					-- FIXME implement all commands
-					-- command mode
-					case m_DBI(6 downto 4) is
-						when "000" => -- NOP
-						when "001" => -- Read Byte
-							m_RDB_cmd  <= '1';
-						when "010" => -- NOP
-						when "011" => -- Read and Branch
-						when "100" => -- Load Address
-						when "101" => -- Speak
-						when "110" => -- Speak External
-							m_RDB_cmd  <= '0';
-							m_DDIS     <= '1';
-							m_FIFO_ptr <= FIFO_bits;
-						when "111" => -- Reset
-							m_RST_cmd <= '1';
-						when others => null;
-					end case;
+					if (m_SXT_cmd <= '1') then
+						m_FIFO_ptr <= FIFO_bits;
+						m_FIFO     <= (others => '0');
+						m_zpar     <= '1';
+						m_uv_zpar  <= '1';
+						m_OLDE     <= '1';
+						m_OLDP     <= '1';
+						m_new_frame_energy_idx <= 0;
+						m_new_frame_repeat     <= '0';
+						m_new_frame_pitch_idx  <= 0;
+						m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
+					end if;
 				end if;
 
-			elsif (m_IC = 0) and (m_cycA = '1') and (m_T = 17) and (m_PHI(3)='0') and (m_TALKD = '1') then
+			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(4) = '0') then
+				if (m_new_frame_energy_idx = 0) then
+					m_OLDE <= '1';
+				else
+					m_OLDE <= '0';
+				end if;
+
+				if (m_new_frame_pitch_idx = 0) then
+					m_OLDP <= '1';
+				else
+					m_OLDP <= '0';
+				end if;
+
+			-- parse LPC bitstrem
+			elsif (m_cycA = '1') and (m_IC = 0) and (m_T = 19) and (m_PHI(3) = '0') and (m_TALKD = '1') then
 				-- Parameter Count cycle A
 				case m_PC is
 					when 0 =>  -- Energy 4 bits
@@ -650,23 +720,11 @@ begin
 							tmp_new_frame_energy_idx <= to_integer(unsigned(m_FIFO(FIFO_bits - 1 downto FIFO_bits - E_bits)));
 
 							if (   m_FIFO(FIFO_bits - 1 downto FIFO_bits - E_bits) = "0000") then
-								m_new_frame_voiced   <= '0';
-								m_new_frame_unvoiced <= '0';
-								m_new_frame_repeat   <= '0';
 								m_new_frame_zero     <= '1'; -- zero frame
-								m_new_frame_stop     <= '0';
 							elsif (m_FIFO(FIFO_bits - 1 downto FIFO_bits - E_bits) = "1111") then
-								m_new_frame_voiced   <= '0';
-								m_new_frame_unvoiced <= '0';
-								m_new_frame_repeat   <= '0';
-								m_new_frame_zero     <= '0';
 								m_new_frame_stop     <= '1'; -- stop frame
 							else
 								m_new_frame_voiced   <= '1'; -- assume voiced
-								m_new_frame_unvoiced <= '0';
-								m_new_frame_repeat   <= '0';
-								m_new_frame_zero     <= '0';
-								m_new_frame_stop     <= '0';
 							end if;
 						else
 							m_UF <= '1'; -- FIFO underflow
@@ -676,7 +734,7 @@ begin
 							if (m_FIFO_ptr <= FIFO_bits - P_bits - R_bits) then
 								m_FIFO_ptr <= m_FIFO_ptr + P_bits + R_bits;
 								m_FIFO <= m_FIFO(FIFO_bits - 1 - P_bits - R_bits downto 0) & ZERO(P_bits + R_bits downto 1);
-								tmp_new_frame_repeat <= m_FIFO(FIFO_bits - 1);
+								m_new_frame_repeat <= m_FIFO(FIFO_bits - 1);
 								tmp_new_frame_pitch_idx <= to_integer(unsigned(m_FIFO(FIFO_bits - 1 - R_bits downto FIFO_bits - R_bits - P_bits)));
 								if (m_FIFO(FIFO_bits - 1 - R_bits downto FIFO_bits - R_bits - P_bits) = "000000") then
 									m_new_frame_voiced   <= '0';
@@ -687,7 +745,7 @@ begin
 							end if;
 						end if;
 
-					when 2 to 5 =>  -- K1  5 bits
+					when 2 to 5 =>  -- K1-K4  5 bits
 						if ((m_new_frame_repeat = '0') and ((m_new_frame_voiced = '1') or (m_new_frame_unvoiced = '1'))) then
 							if (m_FIFO_ptr <= FIFO_bits - K_bits(m_PC-2)) then
 								m_FIFO_ptr <= m_FIFO_ptr + K_bits(m_PC-2);
@@ -698,7 +756,7 @@ begin
 							end if;
 						end if;
 
-					when 6 to 11 =>  -- K5  4 bits
+					when 6 to 11 =>  -- K5-K10  4 bits
 						if ((m_new_frame_repeat = '0') and (m_new_frame_voiced = '1')) then
 							if (m_FIFO_ptr <= FIFO_bits - K_bits(m_PC-2)) then
 								m_FIFO_ptr <= m_FIFO_ptr + K_bits(m_PC-2);
@@ -710,14 +768,20 @@ begin
 						end if;
 
 					when 12 => -- timing cycle
-						if (tmp_new_frame_pitch_idx = 0) and (tmp_new_frame_energy_idx /= 0) then
+						m_zpar <= '0';
+						if (tmp_new_frame_pitch_idx = 0) and (tmp_new_frame_energy_idx /= 0) and (tmp_new_frame_energy_idx /= 15)then
 							m_uv_zpar <= '1';
 						else
 							m_uv_zpar <= '0';
 						end if;
 
+						m_new_frame_voiced   <= '0';
+						m_new_frame_unvoiced <= '0';
+						m_new_frame_repeat   <= '0';
+						m_new_frame_zero     <= '0';
+						m_new_frame_stop     <= '0';
+						m_new_frame_repeat_last<= m_new_frame_repeat;
 						m_new_frame_energy_idx <= tmp_new_frame_energy_idx;
-						m_new_frame_repeat     <= tmp_new_frame_repeat;
 						m_new_frame_pitch_idx  <= tmp_new_frame_pitch_idx;
 						m_new_frame_k_idx(0)   <= tmp_new_frame_k_idx(0);
 						m_new_frame_k_idx(1)   <= tmp_new_frame_k_idx(1);
@@ -753,110 +817,106 @@ begin
 		variable	s				: line;
 	begin
 		wait until rising_edge(CLK);
-		if (m_ENA = '1') and (m_TALKD = '1') then
-			if (m_TALKD = '1') and (m_PHI(3)='0') and (m_T = 16) then
-				WRITE(oraw,this_sample);
+		if (m_ENA = '1') and (m_TALKD = '1') and (m_T = 17) and (m_PHI(3) = '0') then
+			WRITE(oraw,this_sample);
+
+			WRITE(s, "RNG="          ); HWRITE(s, "000"&m_RNG);  WRITE(s, ",");
+			WRITE(s, "sample="       ); WRITE(s, this_sample);   WRITE(s, ",");
+			WRITE(s, "m_IC="         ); WRITE(s, m_IC);          WRITE(s, ",");
+			WRITE(s, "m_PC="         ); WRITE(s, m_PC);          WRITE(s, ",");
+			if (m_cycA = '1') then WRITE(s, "cycle_A, "); else  WRITE(s, "cycle_B,"); end if;
+			WRITE(s, "m_pitch_count="); WRITE(s, m_pitch_count); WRITE(s, ",");
+			WRITE(s, "m_pitch_zero=" ); WRITE(s, m_pitch_zero);  WRITE(s, ",");
+			WRITE(s, "m_inhibit="    ); WRITE(s, m_inhibit);     WRITE(s, ",");
+			WRITE(s, "m_OLDE="       ); WRITE(s, m_OLDE);        WRITE(s, ",");
+			WRITE(s, "m_OLDP="       ); WRITE(s, m_OLDP);        WRITE(s, ",");
+			WRITE(s, "m_DDIS="       ); WRITE(s, m_DDIS);        WRITE(s, ",");
+			WRITE(s, "m_SPEN="       ); WRITE(s, m_SPEN);        WRITE(s, ",");
+			WRITE(s, "m_TALK="       ); WRITE(s, m_TALK);        WRITE(s, ",");
+			WRITE(s, "m_TALKD="      ); WRITE(s, m_TALKD);       WRITE(s, ",");
+			WRITE(s, "m_uv_zpar="    ); WRITE(s, m_uv_zpar);     WRITE(s, " ");
+			WRITE(s, "-- "); WRITE(s, now);
+			WRITELINE(ofile, s);
+
+			WRITE(s, "Lattice:");
+			WRITE(s, " previous_energy="); WRITE(s, m_previous_energy);
+			WRITE(s, ", current_energy="); WRITE(s, m_current_energy);
+			WRITE(s, ", excitation=");     WRITE(s, m_excitation_data);
+
+			WRITE(s, ", m_u=");
+			WRITE(s, m_u(10)); WRITE(s, ",");
+			WRITE(s, m_u( 9)); WRITE(s, ",");
+			WRITE(s, m_u( 8)); WRITE(s, ",");
+			WRITE(s, m_u( 7)); WRITE(s, ",");
+			WRITE(s, m_u( 6)); WRITE(s, ",");
+			WRITE(s, m_u( 5)); WRITE(s, ",");
+			WRITE(s, m_u( 4)); WRITE(s, ",");
+			WRITE(s, m_u( 3)); WRITE(s, ",");
+			WRITE(s, m_u( 2)); WRITE(s, ",");
+			WRITE(s, m_u( 1)); WRITE(s, ",");
+			WRITE(s, m_u( 0));
+
+			WRITE(s, ", m_x=");
+			WRITE(s, m_x( 9)); WRITE(s, ",");
+			WRITE(s, m_x( 8)); WRITE(s, ",");
+			WRITE(s, m_x( 7)); WRITE(s, ",");
+			WRITE(s, m_x( 6)); WRITE(s, ",");
+			WRITE(s, m_x( 5)); WRITE(s, ",");
+			WRITE(s, m_x( 4)); WRITE(s, ",");
+			WRITE(s, m_x( 3)); WRITE(s, ",");
+			WRITE(s, m_x( 2)); WRITE(s, ",");
+			WRITE(s, m_x( 1)); WRITE(s, ",");
+			WRITE(s, m_x( 0));
+			WRITELINE(ofile, s);
+
+			WRITE(s, "current: ");
+			WRITE(s, m_current_energy); WRITE(s, ",");
+			WRITE(s, m_current_pitch);  WRITE(s, ",");
+			WRITE(s, m_current_k(0));   WRITE(s, ",");
+			WRITE(s, m_current_k(1));   WRITE(s, ",");
+			WRITE(s, m_current_k(2));   WRITE(s, ",");
+			WRITE(s, m_current_k(3));   WRITE(s, ",");
+			WRITE(s, m_current_k(4));   WRITE(s, ",");
+			WRITE(s, m_current_k(5));   WRITE(s, ",");
+			WRITE(s, m_current_k(6));   WRITE(s, ",");
+			WRITE(s, m_current_k(7));   WRITE(s, ",");
+			WRITE(s, m_current_k(8));   WRITE(s, ",");
+			WRITE(s, m_current_k(9));
+			WRITELINE(ofile, s);
+
+			WRITE(s, "target : ");
+			WRITE(s, energytable(m_new_frame_energy_idx)); WRITE(s, ",");
+			WRITE(s, pitchtable(m_new_frame_pitch_idx)  ); WRITE(s, ",");
+			WRITE(s, ktable(0,  m_new_frame_k_idx(0))   ); WRITE(s, ",");
+			WRITE(s, ktable(1,  m_new_frame_k_idx(1))   ); WRITE(s, ",");
+			WRITE(s, ktable(2,  m_new_frame_k_idx(2))   ); WRITE(s, ",");
+			WRITE(s, ktable(3,  m_new_frame_k_idx(3))   ); WRITE(s, ",");
+			if (m_uv_zpar = '0') then
+				WRITE(s, ktable(4,  m_new_frame_k_idx(4))); WRITE(s, ",");
+				WRITE(s, ktable(5,  m_new_frame_k_idx(5))); WRITE(s, ",");
+				WRITE(s, ktable(6,  m_new_frame_k_idx(6))); WRITE(s, ",");
+				WRITE(s, ktable(7,  m_new_frame_k_idx(7))); WRITE(s, ",");
+				WRITE(s, ktable(8,  m_new_frame_k_idx(8))); WRITE(s, ",");
+				WRITE(s, ktable(9,  m_new_frame_k_idx(9)));
+			else
+				WRITE(s, "0,0,0,0,0,0");
 			end if;
 
-			if (m_T = 17) and (m_PHI(3)='0') then
-				WRITE(s, "RNG="          ); HWRITE(s, "000"&m_RNG);  WRITE(s, ",");
-				WRITE(s, "sample="       ); WRITE(s, this_sample);   WRITE(s, ",");
-				WRITE(s, "m_IC="         ); WRITE(s, m_IC);          WRITE(s, ",");
-				WRITE(s, "m_PC="         ); WRITE(s, m_PC);          WRITE(s, ",");
-				if (m_cycA = '1') then WRITE(s, "cycle_A, "); else  WRITE(s, "cycle_B,"); end if;
-				WRITE(s, "m_pitch_count="); WRITE(s, m_pitch_count); WRITE(s, ",");
-				WRITE(s, "m_pitch_zero=" ); WRITE(s, m_pitch_zero);  WRITE(s, ",");
-				WRITE(s, "m_inhibit="    ); WRITE(s, m_inhibit);     WRITE(s, ",");
-				WRITE(s, "m_OLDE="       ); WRITE(s, m_OLDE);        WRITE(s, ",");
-				WRITE(s, "m_OLDP="       ); WRITE(s, m_OLDP);        WRITE(s, ",");
-				WRITE(s, "m_DDIS="       ); WRITE(s, m_DDIS);        WRITE(s, ",");
-				WRITE(s, "m_SPEN="       ); WRITE(s, m_SPEN);        WRITE(s, ",");
-				WRITE(s, "m_TALK="       ); WRITE(s, m_TALK);        WRITE(s, ",");
-				WRITE(s, "m_TALKD="      ); WRITE(s, m_TALKD);       WRITE(s, ",");
-				WRITE(s, "m_uv_zpar="    ); WRITE(s, m_uv_zpar);     WRITE(s, " ");
-				WRITE(s, "-- "); WRITE(s, now);
-				WRITELINE(ofile, s);
-
-				WRITE(s, "Lattice:");
-				WRITE(s, " previous_energy="); WRITE(s, m_previous_energy);
-				WRITE(s, ", current_energy="); WRITE(s, m_current_energy);
-				WRITE(s, ", excitation=");     WRITE(s, m_excitation_data);
-
-				WRITE(s, ", m_u=");
-				WRITE(s, m_u(10)); WRITE(s, ",");
-				WRITE(s, m_u( 9)); WRITE(s, ",");
-				WRITE(s, m_u( 8)); WRITE(s, ",");
-				WRITE(s, m_u( 7)); WRITE(s, ",");
-				WRITE(s, m_u( 6)); WRITE(s, ",");
-				WRITE(s, m_u( 5)); WRITE(s, ",");
-				WRITE(s, m_u( 4)); WRITE(s, ",");
-				WRITE(s, m_u( 3)); WRITE(s, ",");
-				WRITE(s, m_u( 2)); WRITE(s, ",");
-				WRITE(s, m_u( 1)); WRITE(s, ",");
-				WRITE(s, m_u( 0));
-
-				WRITE(s, ", m_x=");
-				WRITE(s, m_x( 9)); WRITE(s, ",");
-				WRITE(s, m_x( 8)); WRITE(s, ",");
-				WRITE(s, m_x( 7)); WRITE(s, ",");
-				WRITE(s, m_x( 6)); WRITE(s, ",");
-				WRITE(s, m_x( 5)); WRITE(s, ",");
-				WRITE(s, m_x( 4)); WRITE(s, ",");
-				WRITE(s, m_x( 3)); WRITE(s, ",");
-				WRITE(s, m_x( 2)); WRITE(s, ",");
-				WRITE(s, m_x( 1)); WRITE(s, ",");
-				WRITE(s, m_x( 0));
-				WRITELINE(ofile, s);
-
-				WRITE(s, "current: ");
-				WRITE(s, m_current_energy); WRITE(s, ",");
-				WRITE(s, m_current_pitch);  WRITE(s, ",");
-				WRITE(s, m_current_k(0));   WRITE(s, ",");
-				WRITE(s, m_current_k(1));   WRITE(s, ",");
-				WRITE(s, m_current_k(2));   WRITE(s, ",");
-				WRITE(s, m_current_k(3));   WRITE(s, ",");
-				WRITE(s, m_current_k(4));   WRITE(s, ",");
-				WRITE(s, m_current_k(5));   WRITE(s, ",");
-				WRITE(s, m_current_k(6));   WRITE(s, ",");
-				WRITE(s, m_current_k(7));   WRITE(s, ",");
-				WRITE(s, m_current_k(8));   WRITE(s, ",");
-				WRITE(s, m_current_k(9));
-				WRITELINE(ofile, s);
-
-				WRITE(s, "target : ");
-				WRITE(s, energytable(m_new_frame_energy_idx)); WRITE(s, ",");
-				WRITE(s, pitchtable(m_new_frame_pitch_idx)  ); WRITE(s, ",");
-				WRITE(s, ktable(0,  m_new_frame_k_idx(0))   ); WRITE(s, ",");
-				WRITE(s, ktable(1,  m_new_frame_k_idx(1))   ); WRITE(s, ",");
-				WRITE(s, ktable(2,  m_new_frame_k_idx(2))   ); WRITE(s, ",");
-				WRITE(s, ktable(3,  m_new_frame_k_idx(3))   ); WRITE(s, ",");
-				if (m_uv_zpar = '0') then
-					WRITE(s, ktable(4,  m_new_frame_k_idx(4))); WRITE(s, ",");
-					WRITE(s, ktable(5,  m_new_frame_k_idx(5))); WRITE(s, ",");
-					WRITE(s, ktable(6,  m_new_frame_k_idx(6))); WRITE(s, ",");
-					WRITE(s, ktable(7,  m_new_frame_k_idx(7))); WRITE(s, ",");
-					WRITE(s, ktable(8,  m_new_frame_k_idx(8))); WRITE(s, ",");
-					WRITE(s, ktable(9,  m_new_frame_k_idx(9)));
-				else
-					WRITE(s, "0,0,0,0,0,0");
-				end if;
-
-				WRITE(s, " indexes: ");
-				WRITE(s, m_new_frame_energy_idx); WRITE(s, ",");
-				WRITE(s, m_new_frame_repeat);     WRITE(s, ",");
-				WRITE(s, m_new_frame_pitch_idx);  WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(0));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(1));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(2));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(3));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(4));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(5));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(6));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(7));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(8));   WRITE(s, ",");
-				WRITE(s, m_new_frame_k_idx(9));
-				WRITELINE(ofile, s);
-			end if;
+			WRITE(s, " indexes: ");
+			WRITE(s, m_new_frame_energy_idx); WRITE(s, ",");
+			WRITE(s, m_new_frame_repeat_last);WRITE(s, ",");
+			WRITE(s, m_new_frame_pitch_idx);  WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(0));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(1));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(2));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(3));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(4));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(5));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(6));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(7));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(8));   WRITE(s, ",");
+			WRITE(s, m_new_frame_k_idx(9));
+			WRITELINE(ofile, s);
 		end if;
 	end process;
 --pragma translate_on
