@@ -466,7 +466,7 @@ begin
 		if (m_ENA = '1') then
 			if (m_RST = '1') or (m_UF = '1') then
 				m_SPEN <= '0';
-			elsif ((m_new_frame_stop = '1') and (m_cycA = '1') and (m_IC = 0) and (m_PC = 12) and (m_T = 18) and (m_PHI(4) = '0')) then
+			elsif ((m_new_frame_stop = '1') and (m_cycA = '1') and (m_IC = 0) and (m_PC = 12) and (m_T = 19) and (m_PHI(3) = '0')) then
 				m_SPEN <= '0';
 			-- if BL transitions from 1 to 0 while SPEN = 0
 			elsif (m_buffer_low_last = '1') and (m_buffer_low = '0') and (m_SPEN = '0') then
@@ -484,7 +484,7 @@ begin
 			if (m_RST = '1') then
 				m_TALK  <= '0';
 				m_TALKD <= '0';
-			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(3) = '0')then
+			elsif (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 16) and (m_PHI(3) = '0')then
 				-- if BL transitions from 1 to 0 while SPEN = 0
 
 				if (m_TALK = '0') and (m_SPEN = '1') then
@@ -551,7 +551,9 @@ begin
 		if (m_ENA = '1') then
 			if (m_RST = '1') then
 				m_previous_energy <= 0;
-			elsif (m_TALKD = '1') and (m_PHI(3) = '0') then
+				m_u <= (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+				m_x <= (0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			elsif (m_TALKD = '1')  and (m_PHI(4) = '0') then
 				-- Parameter Count cycle B
 				case m_T is
 					when  1 =>
