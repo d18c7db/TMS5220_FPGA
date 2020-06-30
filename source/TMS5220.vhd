@@ -64,7 +64,7 @@ entity TMS5220 is
 		O_T11    : out std_logic;                    -- pin  7 Sync
 		O_IO     : out std_logic;                    -- pin  9 Serial Data Out
 		O_PRMOUT : out std_logic;                    -- pin 10 Test use only
-		O_SPKR   : out signed(13 downto 0)           -- pin  8 Audio Output
+		O_SPKR   : out integer range -8192 to 8191   -- pin  8 Audio Output
 	);
 end entity;
 
@@ -158,10 +158,9 @@ architecture RTL of TMS5220 is
 		m_RST
 								: std_logic := '1';
 	signal
-		CLK,
+		m_CLK,
 		m_DDIS,
 		m_ENA,
-		m_OF,
 		m_OLDE,
 		m_OLDP,
 		m_RDB_clr,
@@ -180,6 +179,7 @@ architecture RTL of TMS5220 is
 		m_UF,
 		m_WSn,
 		m_WSn_last,
+		m_WR_pending,
 		m_buffer_empty,
 		m_buffer_empty_last,
 		m_buffer_low,
@@ -206,12 +206,13 @@ architecture RTL of TMS5220 is
 		m_PHI
 								: std_logic_vector( 4 downto 1) := (others=>'0');
 	signal
+		m_WR_reg,
 		m_DBO,
 		m_DBI
 								: std_logic_vector( 7 downto 0) := (others=>'0');
 	signal
 		m_speech
-								: std_logic_vector( 9 downto 0) := (others=>'0');
+								: std_logic_vector(11 downto 0) := (others=>'0');
 	signal
 		m_shift
 								: std_logic_vector(11 downto 0) := (others=>'0');
@@ -232,7 +233,7 @@ architecture RTL of TMS5220 is
 		m_FIFO
 								: std_logic_vector(127 downto 0) := (others=>'0');
 begin
-	CLK      <= I_OSC;
+	m_CLK    <= I_OSC;
 	m_ENA    <= I_ENA;
 	m_WSn    <= I_WSn;
 	m_RSn    <= I_RSn;
@@ -243,7 +244,7 @@ begin
 	O_DBUS   <= m_DBO;
 	O_RDYn   <= not (m_io_ready or (not m_DDIS));
 	O_INTn   <= not m_irq_pin;
-	O_SPKR   <= to_signed(this_sample, 14);
+	O_SPKR   <= this_sample;
 
 	-- VSM memory bus driver (not implemented)
 	O_M0     <= '1';
@@ -264,38 +265,39 @@ begin
 	m_buffer_empty <= '1' when m_FIFO_ptr = FIFO_bits   else '0';
 
 	-- timing generator, creates the PHI clock phases, the Interval Counter, Parameter Counter, Time Period and cycle A/B flag
-	p_TIMING : process
+	p_TIMING : process(m_CLK, m_ENA)
 	begin
-		wait until rising_edge(CLK);
-		if (m_ENA = '1') then
-			phictr <= phictr + 1;
-			if (phictr = "11") then
-				-- time period counter
-				if (m_T = 20) then
-					m_T <= 1;
-				else
-					m_T <= m_T + 1;
-				end if;
-
-				-- cycle A/B selector
-				if (m_T = 16) and (m_PC /= 12) then
-					m_cycA <= not m_cycA;
-					m_cycB <=     m_cycA;
-				end if;
-
-				-- parameter counter
-				if (m_cycA = '1') and (m_T = 16) and (m_PC = 12) then
-					m_PC <= 0;
-					-- interval counter
-					if (m_IC = 7) then
-						m_IC <= 0;
+		if rising_edge(m_CLK) then
+			if (m_ENA = '1') then
+				phictr <= phictr + 1;
+				if (phictr = "11") then
+					-- time period counter
+					if (m_T = 20) then
+						m_T <= 1;
 					else
-						m_IC <= m_IC  + 1;
+						m_T <= m_T + 1;
 					end if;
-				elsif (m_cycB = '1') and (m_T = 16) then
-					m_PC <= m_PC + 1;
-				end if;
 
+					-- cycle A/B selector
+					if (m_T = 16) and (m_PC /= 12) then
+						m_cycA <= not m_cycA;
+						m_cycB <=     m_cycA;
+					end if;
+
+					-- parameter counter
+					if (m_cycA = '1') and (m_T = 16) and (m_PC = 12) then
+						m_PC <= 0;
+						-- interval counter
+						if (m_IC = 7) then
+							m_IC <= 0;
+						else
+							m_IC <= m_IC  + 1;
+						end if;
+					elsif (m_cycB = '1') and (m_T = 16) then
+						m_PC <= m_PC + 1;
+					end if;
+
+				end if;
 			end if;
 		end if;
 	end process;
@@ -305,6 +307,8 @@ begin
 	m_PHI(3) <= (    phictr(1)) or phictr(0);
 	m_PHI(4) <= (not phictr(1)) or phictr(0);
 
+	m_speech <= std_logic_vector(to_unsigned(this_sample, 12));
+
 	-- ROMCLK __--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__
 	--           0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19   0   1
 	-- T11    __----____________________________________________________________________________----____
@@ -313,12 +317,12 @@ begin
 	-- digital serial output of DAC
 	p_SERDO : process
 	begin
-		wait until falling_edge(CLK);
+		wait until falling_edge(m_CLK);
 		if (m_PHI(3) = '0') then
 			-- unclear from datasheet if T11 is intended to mean time period 11, assume it is so
 			if (m_T = 11) then
 				m_T11 <= '1';
-				m_shift <= m_speech & "11";
+				m_shift <= m_speech;
 			else
 				m_T11 <= '0';
 				m_shift <= '0' & m_shift(11 downto 1);
@@ -332,7 +336,7 @@ begin
 	-- ready flag "not ready" when FIFO full, else "ready"
 	p_READY : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_FIFO_ptr < 8) then
 				m_io_ready <= '0';
@@ -345,7 +349,7 @@ begin
 	-- read byte flag
 	p_RDBF : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_RDB_clr = '1') or (m_RST = '1') then
 				m_RDB_flag   <= '0';
@@ -358,7 +362,7 @@ begin
 	-- IRQ flag
 	p_IRQ : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			m_buffer_low_last <= m_buffer_low;
 			m_buffer_empty_last <= m_buffer_empty;
@@ -378,11 +382,13 @@ begin
 	-- 13 bit LSFR PRNG, taps 12,3,2,0
 	p_PRNG : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
---			if (m_RST = '1') then
-			if (now < 49.975 ms) then -- FIXME remove after testing
-				m_RNG <= (others=>'1');
+			if (m_RST = '1')
+-- ###############################################################################
+--			OR (now < 49.975 ms)	-- FIXME remove this line after testing
+-- ###############################################################################
+			then m_RNG <= (others=>'1');
 			-- changes synchronous with T cycle
 			elsif (phictr = "11") and (m_TALKD = '1') then
 				m_RNG <= m_RNG(11 downto 0) & (m_RNG(12) xor m_RNG(3) xor m_RNG(2) xor m_RNG(0));
@@ -393,7 +399,7 @@ begin
 	-- Pitch counter
 	p_PITCH : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_TALKD = '1') then
 				if    (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(3) = '0') and (m_inhibit = '1') then
@@ -417,7 +423,7 @@ begin
 	-- read select handler
 	p_RDSEL : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			m_RSn_last <= m_RSn;
 			m_irq_pin_clr  <= '0';
@@ -438,7 +444,7 @@ begin
 	-- update excitation data based on PRNG
 	p_EXDAT : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			-- every new PC cycle
 			if (m_T = 17) and (m_PHI(3) = '0') then
@@ -462,7 +468,7 @@ begin
 	-- enable speech when enough data in FIFO
 	p_SPEN : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_RST = '1') or (m_UF = '1') then
 				m_SPEN <= '0';
@@ -475,10 +481,35 @@ begin
 		end if;
 	end process;
 
+	-- captures state of Energy=0 and Pitch=0
+	p_PREV : process
+	begin
+		wait until rising_edge(m_CLK);
+		if (m_ENA = '1') then
+			-- if Reset or "Speak External" or Write when Decode Disable is on and Speak Enable is off and this write makes BL transition from 1 to 0
+			if (m_RST = '1') or (m_SXT_cmd = '1') or ( (m_WR_pending = '1') and (m_DDIS = '1') and (m_SPEN = '0') and (m_buffer_low_last = '1') and (m_buffer_low = '0') ) then
+				m_OLDE     <= '1';
+				m_OLDP     <= '1';
+			elsif (m_TALKD = '1') and (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(4) = '0') then
+				if (m_new_frame_energy_idx = 0) then
+					m_OLDE <= '1';
+				else
+					m_OLDE <= '0';
+				end if;
+
+				if (m_new_frame_pitch_idx = 0) then
+					m_OLDP <= '1';
+				else
+					m_OLDP <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
 	-- enables or disables speech processing
 	p_TALKD : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			-- if RESET command then stop speech
 			if (m_RST = '1') then
@@ -501,7 +532,7 @@ begin
 	-- parameter interpolator
 	p_INTERP : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_RST = '1') then
 				m_current_energy  <= 0;
@@ -547,7 +578,7 @@ begin
 	-- lattice filter is fed with impulse data and generates speech samples
 	p_LATFLT : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if (m_RST = '1') then
 				m_previous_energy <= 0;
@@ -557,38 +588,38 @@ begin
 				-- Parameter Count cycle B
 				case m_T is
 					when  1 =>
-						m_u(10) <= to_integer(shift_right(to_signed(m_previous_energy * m_excitation_data,   22), 3));
+						m_u(10) <= to_integer(shift_right(to_signed(m_previous_energy * m_excitation_data, 22), 3));
 					when  2 =>
-						m_u( 9) <= m_u(10) - to_integer(shift_right(to_signed(m_current_k( 9) * m_x( 9),     22), 9));
+						m_u( 9) <= m_u(10) - to_integer(shift_right(to_signed(m_current_k( 9) * m_x( 9),   22), 9));
 						m_previous_energy <= m_current_energy;
 					when  3 =>
-						m_u( 8) <= m_u( 9) - to_integer(shift_right(to_signed(m_current_k( 8) * m_x( 8),     22), 9));
+						m_u( 8) <= m_u( 9) - to_integer(shift_right(to_signed(m_current_k( 8) * m_x( 8),   22), 9));
 					when  4 =>
-						m_x( 9) <= m_x( 8) + to_integer(shift_right(to_signed(m_current_k( 8) * m_u( 8),     22), 9));
-						m_u( 7) <= m_u( 8) - to_integer(shift_right(to_signed(m_current_k( 7) * m_x( 7),     22), 9));
+						m_x( 9) <= m_x( 8) + to_integer(shift_right(to_signed(m_current_k( 8) * m_u( 8),   22), 9));
+						m_u( 7) <= m_u( 8) - to_integer(shift_right(to_signed(m_current_k( 7) * m_x( 7),   22), 9));
 					when  5 =>
-						m_x( 8) <= m_x( 7) + to_integer(shift_right(to_signed(m_current_k( 7) * m_u( 7),     22), 9));
-						m_u( 6) <= m_u( 7) - to_integer(shift_right(to_signed(m_current_k( 6) * m_x( 6),     22), 9));
+						m_x( 8) <= m_x( 7) + to_integer(shift_right(to_signed(m_current_k( 7) * m_u( 7),   22), 9));
+						m_u( 6) <= m_u( 7) - to_integer(shift_right(to_signed(m_current_k( 6) * m_x( 6),   22), 9));
 					when  6 =>
-						m_x( 7) <= m_x( 6) + to_integer(shift_right(to_signed(m_current_k( 6) * m_u( 6),     22), 9));
-						m_u( 5) <= m_u( 6) - to_integer(shift_right(to_signed(m_current_k( 5) * m_x( 5),     22), 9));
+						m_x( 7) <= m_x( 6) + to_integer(shift_right(to_signed(m_current_k( 6) * m_u( 6),   22), 9));
+						m_u( 5) <= m_u( 6) - to_integer(shift_right(to_signed(m_current_k( 5) * m_x( 5),   22), 9));
 					when  7 =>
-						m_x( 6) <= m_x( 5) + to_integer(shift_right(to_signed(m_current_k( 5) * m_u( 5),     22), 9));
-						m_u( 4) <= m_u( 5) - to_integer(shift_right(to_signed(m_current_k( 4) * m_x( 4),     22), 9));
+						m_x( 6) <= m_x( 5) + to_integer(shift_right(to_signed(m_current_k( 5) * m_u( 5),   22), 9));
+						m_u( 4) <= m_u( 5) - to_integer(shift_right(to_signed(m_current_k( 4) * m_x( 4),   22), 9));
 					when  8 =>
-						m_x( 5) <= m_x( 4) + to_integer(shift_right(to_signed(m_current_k( 4) * m_u( 4),     22), 9));
-						m_u( 3) <= m_u( 4) - to_integer(shift_right(to_signed(m_current_k( 3) * m_x( 3),     22), 9));
+						m_x( 5) <= m_x( 4) + to_integer(shift_right(to_signed(m_current_k( 4) * m_u( 4),   22), 9));
+						m_u( 3) <= m_u( 4) - to_integer(shift_right(to_signed(m_current_k( 3) * m_x( 3),   22), 9));
 					when  9 =>
-						m_x( 4) <= m_x( 3) + to_integer(shift_right(to_signed(m_current_k( 3) * m_u( 3),     22), 9));
-						m_u( 2) <= m_u( 3) - to_integer(shift_right(to_signed(m_current_k( 2) * m_x( 2),     22), 9));
+						m_x( 4) <= m_x( 3) + to_integer(shift_right(to_signed(m_current_k( 3) * m_u( 3),   22), 9));
+						m_u( 2) <= m_u( 3) - to_integer(shift_right(to_signed(m_current_k( 2) * m_x( 2),   22), 9));
 					when 10 =>
-						m_x( 3) <= m_x( 2) + to_integer(shift_right(to_signed(m_current_k( 2) * m_u( 2),     22), 9));
-						m_u( 1) <= m_u( 2) - to_integer(shift_right(to_signed(m_current_k( 1) * m_x( 1),     22), 9));
+						m_x( 3) <= m_x( 2) + to_integer(shift_right(to_signed(m_current_k( 2) * m_u( 2),   22), 9));
+						m_u( 1) <= m_u( 2) - to_integer(shift_right(to_signed(m_current_k( 1) * m_x( 1),   22), 9));
 					when 11 =>
-						m_x( 2) <= m_x( 1) + to_integer(shift_right(to_signed(m_current_k( 1) * m_u( 1),     22), 9));
-						m_u( 0) <= m_u( 1) - to_integer(shift_right(to_signed(m_current_k( 0) * m_x( 0),     22), 9));
+						m_x( 2) <= m_x( 1) + to_integer(shift_right(to_signed(m_current_k( 1) * m_u( 1),   22), 9));
+						m_u( 0) <= m_u( 1) - to_integer(shift_right(to_signed(m_current_k( 0) * m_x( 0),   22), 9));
 					when 12 =>
-						m_x( 1) <= m_x( 0) + to_integer(shift_right(to_signed(m_current_k( 0) * m_u( 0),     22), 9));
+						m_x( 1) <= m_x( 0) + to_integer(shift_right(to_signed(m_current_k( 0) * m_u( 0),   22), 9));
 						m_x( 0) <= m_u( 0);
 						this_sample <= m_u( 0);
 					when others => null;
@@ -600,7 +631,7 @@ begin
 	-- command processing
 	p_CMD : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			if ((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1')) then
 				m_RDB_cmd  <= '0';
@@ -631,7 +662,7 @@ begin
 	-- Decode Disable when set, the chip is in Speak External mode
 	p_DDIS : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
 			m_TALKD_last <= m_TALKD;
 			if (m_RST = '1') or (m_TALKD_last= '1' and m_TALKD= '0') then
@@ -642,75 +673,76 @@ begin
 		end if;
 	end process;
 
-	-- write select handler, FIFO, parameter parser
-	p_WS : process
+	-- inhibits parameter interpolator
+	p_INHIBIT : process
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') then
-			m_WSn_last   <= m_WSn;
-			m_UF         <= '0'; -- FIFO underflow flag
-			m_OF         <= '0'; -- FIFO overflow flag
 			if (m_RST = '1') then
-				m_OLDE            <= '1';
-				m_OLDP            <= '1';
-				m_inhibit         <= '1';
-				m_zpar            <= '0';
-				m_uv_zpar         <= '0';
+				m_inhibit <= '1';
+			elsif (m_cycA = '1') and (m_IC = 0) and (m_PC = 12) and (m_T = 19) and (m_PHI(3) = '0') and (m_TALKD = '1') then
+				if (
+					((m_OLDP = '0') and (tmp_new_frame_pitch_idx   = 0)) or
+					((m_OLDP = '1') and (tmp_new_frame_pitch_idx  /= 0)) or
+					((m_OLDE = '1') and (tmp_new_frame_energy_idx /= 0)) or
+					((m_OLDP = '1') and (tmp_new_frame_energy_idx  = 0))
+				) then
+					m_inhibit <= '1';
+				else
+					m_inhibit <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
+	-- parameter zeroing controls
+	p_ZPAR : process
+	begin
+		wait until rising_edge(m_CLK);
+		if (m_ENA = '1') then
+			if (m_RST = '1') or ((m_DDIS = '0') and (m_SXT_cmd <= '1')) or
+				((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1') and (m_DDIS = '1') and (m_SPEN = '0') and (m_FIFO_ptr > 64) and (m_FIFO_ptr < 73))
+			then
+				m_zpar    <= '1';
+				m_uv_zpar <= '1';
+			end if;
+			if (m_cycA = '1') and (m_IC = 0) and (m_PC = 12) and (m_T = 19) and (m_PHI(3) = '0') and (m_TALKD = '1') then
+				m_zpar <= '0';
+				if (tmp_new_frame_pitch_idx = 0) and (tmp_new_frame_energy_idx /= 0) and (tmp_new_frame_energy_idx /= 15) then
+					m_uv_zpar <= '1';
+				else
+					m_uv_zpar <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
+	-- FIFO and parameter parser
+	p_FIFO : process
+	begin
+		wait until rising_edge(m_CLK);
+		if (m_ENA = '1') then
+			m_WSn_last <= m_WSn;
+			m_UF       <= '0'; -- FIFO underflow flag
+
+			if (m_RST = '1') or ((m_DDIS = '0') and (m_SXT_cmd <= '1')) then
 				m_FIFO_ptr        <= FIFO_bits;
 				m_FIFO            <= (others => '0');
-				m_new_frame_stop  <= '0';
+			-- if write select and speak external mode and there is room in FIFO
+			elsif (m_DDIS = '1') and (m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1') and (m_FIFO_ptr > 7) then
+				m_WR_reg <= m_DBI(0)&m_DBI(1)&m_DBI(2)&m_DBI(3)&m_DBI(4)&m_DBI(5)&m_DBI(6)&m_DBI(7);
+				m_WR_pending <= '1';
+			end if;
+
+			if (m_RST = '1') or ((m_DDIS = '0') and (m_SXT_cmd <= '1')) or
+				((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1') and (m_DDIS = '1') and (m_SPEN = '0') and (m_FIFO_ptr > 64) and (m_FIFO_ptr < 73))
+			then
 				m_new_frame_energy_idx <= 0;
 				m_new_frame_pitch_idx  <= 0;
-				m_new_frame_k_idx   <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
-				tmp_new_frame_k_idx <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
-			elsif ((m_WSn_last = '1') and (m_WSn = '0') and (m_RSn = '1')) then
-				-- if speak external mode
-				if (m_DDIS = '1') then
-					if (m_FIFO_ptr > 7) then -- if there is room in FIFO, else values written are LOST
-						if (m_SPEN = '0') and (m_FIFO_ptr > 64) and (m_FIFO_ptr < 73) then
-							-- if this write makes BL transition from 1 to 0 while SPEN = 0
-							m_zpar    <= '1';
-							m_uv_zpar <= '1';
-							m_OLDE    <= '1';
-							m_OLDP    <= '1';
-							m_new_frame_energy_idx <= 0;
-							m_new_frame_pitch_idx  <= 0;
-							m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
-							tmp_new_frame_k_idx    <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
-						end if;
-						m_FIFO(m_FIFO_ptr - 1 downto m_FIFO_ptr - 8) <= m_DBI(0)&m_DBI(1)&m_DBI(2)&m_DBI(3)&m_DBI(4)&m_DBI(5)&m_DBI(6)&m_DBI(7);
-						m_FIFO_ptr <= m_FIFO_ptr - 8; -- update counter of empty bits in FIFO
-					else
-						m_OF <= '1';
-					end if;
-				else
-					if (m_SXT_cmd <= '1') then
-						m_FIFO_ptr <= FIFO_bits;
-						m_FIFO     <= (others => '0');
-						m_zpar     <= '1';
-						m_uv_zpar  <= '1';
-						m_OLDE     <= '1';
-						m_OLDP     <= '1';
-						m_new_frame_energy_idx <= 0;
-						m_new_frame_pitch_idx  <= 0;
-						m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
-					end if;
-				end if;
+				m_new_frame_k_idx      <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
+				tmp_new_frame_k_idx    <= (0, 0, 0, 0, 15, 15, 15, 7, 7, 7);
 
-			elsif (m_TALKD = '1') and (m_cycA = '1') and (m_IC = 7) and (m_PC = 12) and (m_T = 20) and (m_PHI(4) = '0') then
-				if (m_new_frame_energy_idx = 0) then
-					m_OLDE <= '1';
-				else
-					m_OLDE <= '0';
-				end if;
-
-				if (m_new_frame_pitch_idx = 0) then
-					m_OLDP <= '1';
-				else
-					m_OLDP <= '0';
-				end if;
-
-			-- parse LPC bitstrem
+			-- parse LPC bitstream
 			elsif (m_cycA = '1') and (m_IC = 0) and (m_T = 19) and (m_PHI(3) = '0') and (m_TALKD = '1') then
 				-- Parameter Count cycle A
 				case m_PC is
@@ -725,6 +757,8 @@ begin
 							elsif (m_FIFO(FIFO_bits - 1 downto FIFO_bits - E_bits) = "1111") then
 								m_new_frame_stop     <= '1'; -- stop frame
 							else
+								m_new_frame_zero     <= '0';
+								m_new_frame_stop     <= '0';
 								m_new_frame_voiced   <= '1'; -- assume voiced
 							end if;
 						else
@@ -769,13 +803,6 @@ begin
 						end if;
 
 					when 12 => -- timing cycle
-						m_zpar <= '0';
-						if (tmp_new_frame_pitch_idx = 0) and (tmp_new_frame_energy_idx /= 0) and (tmp_new_frame_energy_idx /= 15)then
-							m_uv_zpar <= '1';
-						else
-							m_uv_zpar <= '0';
-						end if;
-
 						m_new_frame_voiced   <= '0';
 						m_new_frame_unvoiced <= '0';
 						m_new_frame_zero     <= '0';
@@ -793,18 +820,13 @@ begin
 						m_new_frame_k_idx(7)   <= tmp_new_frame_k_idx(7);
 						m_new_frame_k_idx(8)   <= tmp_new_frame_k_idx(8);
 						m_new_frame_k_idx(9)   <= tmp_new_frame_k_idx(9);
-						if (
-							((m_OLDP = '0') and (tmp_new_frame_pitch_idx   = 0)) or
-							((m_OLDP = '1') and (tmp_new_frame_pitch_idx  /= 0)) or
-							((m_OLDE = '1') and (tmp_new_frame_energy_idx /= 0)) or
-							((m_OLDP = '1') and (tmp_new_frame_energy_idx  = 0))
-						) then
-							m_inhibit <= '1';
-						else
-							m_inhibit <= '0';
-						end if;
 					when others => null;
 				end case;
+			-- insert data into FIFO
+			elsif (m_WR_pending = '1') then
+				m_WR_pending <= '0';
+				m_FIFO(m_FIFO_ptr - 1 downto m_FIFO_ptr - 8) <= m_WR_reg;
+				m_FIFO_ptr <= m_FIFO_ptr - 8; -- update counter of empty bits in FIFO
 			end if;
 		end if;
 	end process;
@@ -816,7 +838,7 @@ begin
 		file		oraw			: myfile open WRITE_MODE is "sound.raw";
 		variable	s				: line;
 	begin
-		wait until rising_edge(CLK);
+		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') and (m_TALKD = '1') and (m_T = 17) and (m_PHI(3) = '0') then
 			WRITE(oraw,this_sample);
 
@@ -834,6 +856,7 @@ begin
 			WRITE(s, "m_SPEN="       ); WRITE(s, m_SPEN);        WRITE(s, ",");
 			WRITE(s, "m_TALK="       ); WRITE(s, m_TALK);        WRITE(s, ",");
 			WRITE(s, "m_TALKD="      ); WRITE(s, m_TALKD);       WRITE(s, ",");
+			WRITE(s, "m_zpar="       ); WRITE(s, m_zpar);        WRITE(s, ",");
 			WRITE(s, "m_uv_zpar="    ); WRITE(s, m_uv_zpar);     WRITE(s, " ");
 			WRITE(s, "-- "); WRITE(s, now);
 			WRITELINE(ofile, s);

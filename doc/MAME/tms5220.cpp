@@ -882,7 +882,7 @@ bool tms5220_device::int_read()
 int rep_flag;
 void tms5220_device::dump_int_state()
 {
-	printf("RNG=%04X,sample=%d,m_IC=%d,m_PC=%d,cycle_%C,m_pitch_count=%d,m_pitch_zero=%d,m_inhibit=%d,m_OLDE=%d,m_OLDP=%d,m_DDIS=%d,m_SPEN=%d,m_TALK=%d,m_TALKD=%d,m_uv_zpar=%d ", m_RNG&0x1FFF, this_sample, m_IP,  m_PC, (m_subcycle==1)?'A':'B', m_pitch_count, m_pitch_zero, m_inhibit, m_OLDE, m_OLDP, m_DDIS, m_SPEN, m_TALK, m_TALKD, m_uv_zpar);
+	printf("RNG=%04X,sample=%d,m_IC=%d,m_PC=%d,cycle_%C,m_pitch_count=%d,m_pitch_zero=%d,m_inhibit=%d,m_OLDE=%d,m_OLDP=%d,m_DDIS=%d,m_SPEN=%d,m_TALK=%d,m_TALKD=%d,m_zpar=%d,m_uv_zpar=%d ", m_RNG&0x1FFF, this_sample, m_IP,  m_PC, (m_subcycle==1)?'A':'B', m_pitch_count, m_pitch_zero, m_inhibit, m_OLDE, m_OLDP, m_DDIS, m_SPEN, m_TALK, m_TALKD, m_zpar, m_uv_zpar);
 
 	printf("\nLattice: previous_energy=%d, current_energy=%d, excitation=%d, ", m_previous_energy ,m_current_energy ,m_excitation_data);
 	printf("m_u=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",m_u[10],m_u[9],m_u[8],m_u[7],m_u[6],m_u[5],m_u[4],m_u[3],m_u[2],m_u[1],m_u[0]);
