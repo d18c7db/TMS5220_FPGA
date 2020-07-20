@@ -21,9 +21,9 @@
 --      * Generating speech in "Speak External" mode
 --      * Commands "NOP", "Speak External", "Reset"
 --      * Interrupt output pin
+--      * Output Ready pin
 --      * Reading of status bits TS, BL, BE
 --    What doesn't work:
---      * Output Ready pin (always asserted)
 --      * Variable frame rate
 --      * Commands "Read Byte", "Read and Branch", "Load Address", "Speak", "Load Frame Rate"
 --      * Everything to do with TMS6100 external VSM ROM
