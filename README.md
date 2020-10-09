@@ -1,4 +1,4 @@
-# VHDL simulation model of TMS5220 chip
+# VHDL model of TMS5220 voice synthesizer processor
 
 ## About
 This implements the TMS5220 voice synthesizer processor (VSP), popular in many arcade games of the 80's. I had originally intended to follow the schematics in the patent US4335277, however that proved to be far too complicated for me due to them not being standard TTL logic, but as the patent puts it: "The synthesizer is preferably implemented using pre-charged, conditional discharge type logic".  
