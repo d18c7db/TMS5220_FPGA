@@ -64,20 +64,20 @@ entity TMS5220 is
 		O_T11    : out std_logic;                    -- pin  7 Sync
 		O_IO     : out std_logic;                    -- pin  9 Serial Data Out
 		O_PRMOUT : out std_logic;                    -- pin 10 Test use only
-		O_SPKR   : out integer range -8192 to 8191   -- pin  8 Audio Output
+		O_SPKR   : out signed(13 downto 0)           -- pin  8 Audio Output
 	);
 end entity;
 
 architecture RTL of TMS5220 is
-	type BL_ARRAY is array (0 to  9) of integer range 0 to 7; -- 3 bits
-	type IX_ARRAY is array (0 to  9) of integer range 0 to 31; -- 5 bits
-	type MU_ARRAY is array (0 to 10) of integer range -4096 to 4097; -- 11 bits
-	type MX_ARRAY is array (0 to  9) of integer range -4096 to 4097; -- 11 bits
-	type KV_ARRAY is array (0 to  9) of integer range -512 to 511; -- 10 bits
-	type EN_ARRAY is array (0 to 15) of integer range 0 to 127; -- 7 bits
-	type PI_ARRAY is array (0 to 63) of integer range 0 to 255; -- 8 bits
-	type CH_ARRAY is array (0 to 51) of integer range 0 to 127; -- 7 bits
-	type IP_ARRAY is array (0 to  7) of integer range 0 to 3; -- 2 bits
+	type IP_ARRAY is array (0 to  7) of integer range     0 to    3; --  2 bits
+	type BL_ARRAY is array (0 to  9) of integer range     0 to    7; --  3 bits
+	type IX_ARRAY is array (0 to  9) of integer range     0 to   31; --  5 bits
+	type EN_ARRAY is array (0 to 15) of integer range     0 to  127; --  7 bits
+	type CH_ARRAY is array (0 to 51) of integer range     0 to  127; --  7 bits
+	type PI_ARRAY is array (0 to 63) of integer range     0 to  255; --  8 bits
+	type KV_ARRAY is array (0 to  9) of integer range  -512 to  511; -- 10 bits
+	type MU_ARRAY is array (0 to 10) of integer range -4096 to 4095; -- 13 bits
+	type MX_ARRAY is array (0 to  9) of integer range -4096 to 4095; -- 13 bits
 	type KT_ARRAY is array (0 to  9, 0 to 31) of integer range -512 to 511; -- 10 bits
 
 	constant FIFO_bits   : integer := 128; -- FIFO size in bits
@@ -225,7 +225,7 @@ architecture RTL of TMS5220 is
 		m_current_energy,
 		m_current_pitch,
 		this_sample
-								: integer := 0;
+								: integer range -8192 to 8191 := 0;
 	signal
 		m_current_k
 								: KV_ARRAY := (0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -244,7 +244,7 @@ begin
 	O_DBUS   <= m_DBO;
 	O_RDYn   <= not (m_io_ready or (not m_DDIS));
 	O_INTn   <= not m_irq_pin;
-	O_SPKR   <= this_sample;
+	O_SPKR   <= to_signed(this_sample, 14);
 
 	-- VSM memory bus driver (not implemented)
 	O_M0     <= '1';
