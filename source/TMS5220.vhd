@@ -71,8 +71,8 @@ end entity;
 architecture RTL of TMS5220 is
 	type BL_ARRAY is array (0 to  9) of integer range 0 to 7; -- 3 bits
 	type IX_ARRAY is array (0 to  9) of integer range 0 to 31; -- 5 bits
-	type MU_ARRAY is array (0 to 10) of integer range -1024 to 1023; -- 11 bits
-	type MX_ARRAY is array (0 to  9) of integer range -1024 to 1023; -- 11 bits
+	type MU_ARRAY is array (0 to 10) of integer range -4096 to 4097; -- 11 bits
+	type MX_ARRAY is array (0 to  9) of integer range -4096 to 4097; -- 11 bits
 	type KV_ARRAY is array (0 to  9) of integer range -512 to 511; -- 10 bits
 	type EN_ARRAY is array (0 to 15) of integer range 0 to 127; -- 7 bits
 	type PI_ARRAY is array (0 to 63) of integer range 0 to 255; -- 8 bits
@@ -212,10 +212,10 @@ architecture RTL of TMS5220 is
 								: std_logic_vector( 7 downto 0) := (others=>'0');
 	signal
 		m_speech
-								: std_logic_vector(11 downto 0) := (others=>'0');
+								: std_logic_vector(13 downto 0) := (others=>'0');
 	signal
 		m_shift
-								: std_logic_vector(11 downto 0) := (others=>'0');
+								: std_logic_vector(13 downto 0) := (others=>'0');
 	signal
 		m_RNG
 								: std_logic_vector(12 downto 0) := (others=>'1');
@@ -307,12 +307,12 @@ begin
 	m_PHI(3) <= (    phictr(1)) or phictr(0);
 	m_PHI(4) <= (not phictr(1)) or phictr(0);
 
-	m_speech <= std_logic_vector(to_unsigned(this_sample, 12));
+	m_speech <= std_logic_vector(to_signed(this_sample, m_speech'length)); --
 
 	-- ROMCLK __--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__
 	--           0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19   0   1
 	-- T11    __----____________________________________________________________________________----____
-	-- I/O    __________|LSB|   |   |   |   |   |   |   |   |MSB|_______________________________________
+	-- I/O    __|LSB|   |   |   |   |   |   |   |   |   |   |   |   |MSB|_______________________________
 
 	-- digital serial output of DAC
 	p_SERDO : process
@@ -325,7 +325,7 @@ begin
 				m_shift <= m_speech;
 			else
 				m_T11 <= '0';
-				m_shift <= '0' & m_shift(11 downto 1);
+				m_shift <= '0' & m_shift(m_shift'left downto 1);
 			end if;
 		end if;
 	end process;
@@ -840,104 +840,104 @@ begin
 	begin
 		wait until rising_edge(m_CLK);
 		if (m_ENA = '1') and (m_TALKD = '1') and (m_T = 17) and (m_PHI(3) = '0') then
-			WRITE(oraw,this_sample);
+			WRITE(oraw, this_sample);
 
-			WRITE(s, "RNG="          ); HWRITE(s, "000"&m_RNG);  WRITE(s, ",");
-			WRITE(s, "sample="       ); WRITE(s, this_sample);   WRITE(s, ",");
-			WRITE(s, "m_IC="         ); WRITE(s, m_IC);          WRITE(s, ",");
-			WRITE(s, "m_PC="         ); WRITE(s, m_PC);          WRITE(s, ",");
-			if (m_cycA = '1') then WRITE(s, "cycle_A, "); else  WRITE(s, "cycle_B,"); end if;
-			WRITE(s, "m_pitch_count="); WRITE(s, m_pitch_count); WRITE(s, ",");
-			WRITE(s, "m_pitch_zero=" ); WRITE(s, m_pitch_zero);  WRITE(s, ",");
-			WRITE(s, "m_inhibit="    ); WRITE(s, m_inhibit);     WRITE(s, ",");
-			WRITE(s, "m_OLDE="       ); WRITE(s, m_OLDE);        WRITE(s, ",");
-			WRITE(s, "m_OLDP="       ); WRITE(s, m_OLDP);        WRITE(s, ",");
-			WRITE(s, "m_DDIS="       ); WRITE(s, m_DDIS);        WRITE(s, ",");
-			WRITE(s, "m_SPEN="       ); WRITE(s, m_SPEN);        WRITE(s, ",");
-			WRITE(s, "m_TALK="       ); WRITE(s, m_TALK);        WRITE(s, ",");
-			WRITE(s, "m_TALKD="      ); WRITE(s, m_TALKD);       WRITE(s, ",");
-			WRITE(s, "m_zpar="       ); WRITE(s, m_zpar);        WRITE(s, ",");
-			WRITE(s, "m_uv_zpar="    ); WRITE(s, m_uv_zpar);     WRITE(s, " ");
-			WRITE(s, "-- "); WRITE(s, now);
+			WRITE(s, string'("RNG="          )); HWRITE(s, "000"&m_RNG);  WRITE(s, string'(","));
+			WRITE(s, string'("sample="       )); WRITE(s, this_sample);   WRITE(s, string'(","));
+			WRITE(s, string'("m_IC="         )); WRITE(s, m_IC);          WRITE(s, string'(","));
+			WRITE(s, string'("m_PC="         )); WRITE(s, m_PC);          WRITE(s, string'(","));
+			if (m_cycA = '1') then WRITE(s, string'("cycle_A, ")); else   WRITE(s, string'("cycle_B,")); end if;
+			WRITE(s, string'("m_pitch_count=")); WRITE(s, m_pitch_count); WRITE(s, string'(","));
+			WRITE(s, string'("m_pitch_zero=" )); WRITE(s, m_pitch_zero);  WRITE(s, string'(","));
+			WRITE(s, string'("m_inhibit="    )); WRITE(s, m_inhibit);     WRITE(s, string'(","));
+			WRITE(s, string'("m_OLDE="       )); WRITE(s, m_OLDE);        WRITE(s, string'(","));
+			WRITE(s, string'("m_OLDP="       )); WRITE(s, m_OLDP);        WRITE(s, string'(","));
+			WRITE(s, string'("m_DDIS="       )); WRITE(s, m_DDIS);        WRITE(s, string'(","));
+			WRITE(s, string'("m_SPEN="       )); WRITE(s, m_SPEN);        WRITE(s, string'(","));
+			WRITE(s, string'("m_TALK="       )); WRITE(s, m_TALK);        WRITE(s, string'(","));
+			WRITE(s, string'("m_TALKD="      )); WRITE(s, m_TALKD);       WRITE(s, string'(","));
+			WRITE(s, string'("m_zpar="       )); WRITE(s, m_zpar);        WRITE(s, string'(","));
+			WRITE(s, string'("m_uv_zpar="    )); WRITE(s, m_uv_zpar);     WRITE(s, string'(" "));
+			WRITE(s, string'("-- ")); WRITE(s, now);
 			WRITELINE(ofile, s);
 
-			WRITE(s, "Lattice:");
-			WRITE(s, " previous_energy="); WRITE(s, m_previous_energy);
-			WRITE(s, ", current_energy="); WRITE(s, m_current_energy);
-			WRITE(s, ", excitation=");     WRITE(s, m_excitation_data);
+			WRITE(s, string'("Lattice:"));
+			WRITE(s, string'(" previous_energy=")); WRITE(s, m_previous_energy);
+			WRITE(s, string'(", current_energy=")); WRITE(s, m_current_energy);
+			WRITE(s, string'(", excitation="));     WRITE(s, m_excitation_data);
 
-			WRITE(s, ", m_u=");
-			WRITE(s, m_u(10)); WRITE(s, ",");
-			WRITE(s, m_u( 9)); WRITE(s, ",");
-			WRITE(s, m_u( 8)); WRITE(s, ",");
-			WRITE(s, m_u( 7)); WRITE(s, ",");
-			WRITE(s, m_u( 6)); WRITE(s, ",");
-			WRITE(s, m_u( 5)); WRITE(s, ",");
-			WRITE(s, m_u( 4)); WRITE(s, ",");
-			WRITE(s, m_u( 3)); WRITE(s, ",");
-			WRITE(s, m_u( 2)); WRITE(s, ",");
-			WRITE(s, m_u( 1)); WRITE(s, ",");
+			WRITE(s, string'(", m_u="));
+			WRITE(s, m_u(10)); WRITE(s, string'(","));
+			WRITE(s, m_u( 9)); WRITE(s, string'(","));
+			WRITE(s, m_u( 8)); WRITE(s, string'(","));
+			WRITE(s, m_u( 7)); WRITE(s, string'(","));
+			WRITE(s, m_u( 6)); WRITE(s, string'(","));
+			WRITE(s, m_u( 5)); WRITE(s, string'(","));
+			WRITE(s, m_u( 4)); WRITE(s, string'(","));
+			WRITE(s, m_u( 3)); WRITE(s, string'(","));
+			WRITE(s, m_u( 2)); WRITE(s, string'(","));
+			WRITE(s, m_u( 1)); WRITE(s, string'(","));
 			WRITE(s, m_u( 0));
 
-			WRITE(s, ", m_x=");
-			WRITE(s, m_x( 9)); WRITE(s, ",");
-			WRITE(s, m_x( 8)); WRITE(s, ",");
-			WRITE(s, m_x( 7)); WRITE(s, ",");
-			WRITE(s, m_x( 6)); WRITE(s, ",");
-			WRITE(s, m_x( 5)); WRITE(s, ",");
-			WRITE(s, m_x( 4)); WRITE(s, ",");
-			WRITE(s, m_x( 3)); WRITE(s, ",");
-			WRITE(s, m_x( 2)); WRITE(s, ",");
-			WRITE(s, m_x( 1)); WRITE(s, ",");
+			WRITE(s, string'(", m_x="));
+			WRITE(s, m_x( 9)); WRITE(s, string'(","));
+			WRITE(s, m_x( 8)); WRITE(s, string'(","));
+			WRITE(s, m_x( 7)); WRITE(s, string'(","));
+			WRITE(s, m_x( 6)); WRITE(s, string'(","));
+			WRITE(s, m_x( 5)); WRITE(s, string'(","));
+			WRITE(s, m_x( 4)); WRITE(s, string'(","));
+			WRITE(s, m_x( 3)); WRITE(s, string'(","));
+			WRITE(s, m_x( 2)); WRITE(s, string'(","));
+			WRITE(s, m_x( 1)); WRITE(s, string'(","));
 			WRITE(s, m_x( 0));
 			WRITELINE(ofile, s);
 
-			WRITE(s, "current: ");
-			WRITE(s, m_current_energy); WRITE(s, ",");
-			WRITE(s, m_current_pitch);  WRITE(s, ",");
-			WRITE(s, m_current_k(0));   WRITE(s, ",");
-			WRITE(s, m_current_k(1));   WRITE(s, ",");
-			WRITE(s, m_current_k(2));   WRITE(s, ",");
-			WRITE(s, m_current_k(3));   WRITE(s, ",");
-			WRITE(s, m_current_k(4));   WRITE(s, ",");
-			WRITE(s, m_current_k(5));   WRITE(s, ",");
-			WRITE(s, m_current_k(6));   WRITE(s, ",");
-			WRITE(s, m_current_k(7));   WRITE(s, ",");
-			WRITE(s, m_current_k(8));   WRITE(s, ",");
+			WRITE(s, string'("current: "));
+			WRITE(s, m_current_energy); WRITE(s, string'(","));
+			WRITE(s, m_current_pitch);  WRITE(s, string'(","));
+			WRITE(s, m_current_k(0));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(1));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(2));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(3));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(4));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(5));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(6));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(7));   WRITE(s, string'(","));
+			WRITE(s, m_current_k(8));   WRITE(s, string'(","));
 			WRITE(s, m_current_k(9));
 			WRITELINE(ofile, s);
 
-			WRITE(s, "target : ");
-			WRITE(s, energytable(m_new_frame_energy_idx)); WRITE(s, ",");
-			WRITE(s, pitchtable(m_new_frame_pitch_idx)  ); WRITE(s, ",");
-			WRITE(s, ktable(0,  m_new_frame_k_idx(0))   ); WRITE(s, ",");
-			WRITE(s, ktable(1,  m_new_frame_k_idx(1))   ); WRITE(s, ",");
-			WRITE(s, ktable(2,  m_new_frame_k_idx(2))   ); WRITE(s, ",");
-			WRITE(s, ktable(3,  m_new_frame_k_idx(3))   ); WRITE(s, ",");
+			WRITE(s, string'("target : "));
+			WRITE(s, energytable(m_new_frame_energy_idx)); WRITE(s, string'(","));
+			WRITE(s, pitchtable(m_new_frame_pitch_idx)  ); WRITE(s, string'(","));
+			WRITE(s, ktable(0,  m_new_frame_k_idx(0))   ); WRITE(s, string'(","));
+			WRITE(s, ktable(1,  m_new_frame_k_idx(1))   ); WRITE(s, string'(","));
+			WRITE(s, ktable(2,  m_new_frame_k_idx(2))   ); WRITE(s, string'(","));
+			WRITE(s, ktable(3,  m_new_frame_k_idx(3))   ); WRITE(s, string'(","));
 			if (m_uv_zpar = '0') then
-				WRITE(s, ktable(4,  m_new_frame_k_idx(4))); WRITE(s, ",");
-				WRITE(s, ktable(5,  m_new_frame_k_idx(5))); WRITE(s, ",");
-				WRITE(s, ktable(6,  m_new_frame_k_idx(6))); WRITE(s, ",");
-				WRITE(s, ktable(7,  m_new_frame_k_idx(7))); WRITE(s, ",");
-				WRITE(s, ktable(8,  m_new_frame_k_idx(8))); WRITE(s, ",");
+				WRITE(s, ktable(4,  m_new_frame_k_idx(4))); WRITE(s, string'(","));
+				WRITE(s, ktable(5,  m_new_frame_k_idx(5))); WRITE(s, string'(","));
+				WRITE(s, ktable(6,  m_new_frame_k_idx(6))); WRITE(s, string'(","));
+				WRITE(s, ktable(7,  m_new_frame_k_idx(7))); WRITE(s, string'(","));
+				WRITE(s, ktable(8,  m_new_frame_k_idx(8))); WRITE(s, string'(","));
 				WRITE(s, ktable(9,  m_new_frame_k_idx(9)));
 			else
-				WRITE(s, "0,0,0,0,0,0");
+				WRITE(s, string'("0,0,0,0,0,0"));
 			end if;
 
-			WRITE(s, " indexes: ");
-			WRITE(s, m_new_frame_energy_idx); WRITE(s, ",");
-			WRITE(s, m_new_frame_repeat_last);WRITE(s, ",");
-			WRITE(s, m_new_frame_pitch_idx);  WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(0));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(1));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(2));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(3));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(4));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(5));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(6));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(7));   WRITE(s, ",");
-			WRITE(s, m_new_frame_k_idx(8));   WRITE(s, ",");
+			WRITE(s, string'(" indexes: "));
+			WRITE(s, m_new_frame_energy_idx); WRITE(s, string'(","));
+			WRITE(s, m_new_frame_repeat_last);WRITE(s, string'(","));
+			WRITE(s, m_new_frame_pitch_idx);  WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(0));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(1));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(2));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(3));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(4));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(5));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(6));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(7));   WRITE(s, string'(","));
+			WRITE(s, m_new_frame_k_idx(8));   WRITE(s, string'(","));
 			WRITE(s, m_new_frame_k_idx(9));
 			WRITELINE(ofile, s);
 		end if;
