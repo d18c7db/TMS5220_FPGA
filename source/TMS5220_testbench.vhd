@@ -57,7 +57,7 @@ architecture behavior of tms5220_tb is
 	signal O_IO     : std_logic;
 	signal O_PRMOUT : std_logic;
 	signal O_DBUS   : std_logic_vector(7 downto 0);
-	signal O_SPKR   : signed(13 downto 0);
+	signal O_SPKR   : integer;
 
 	signal
 		current,
